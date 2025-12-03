@@ -182,8 +182,27 @@ class COCO(data.Dataset):
         imf = file_name.split(file_name.split('/')[-1])[0]      # img/airplane/11/
         # imIdex = file_name.split('.')[0].split('/')[-1]         #000001
         # imf = file_name.split('/')[1]           #001
-        imtype = '.'+file_name.split('.')[-1]                   # .png
-        im0 = cv2.imread(self.img_dir + file_name)
+        imtype_original = '.'+file_name.split('.')[-1]                   # .png or .jpg
+        # Try to read image, if fails try alternative extension
+        img_path = self.img_dir + file_name
+        im0 = cv2.imread(img_path)
+        if im0 is None:
+            # Try alternative extension (png/jpg)
+            file_name_base = file_name.rsplit('.', 1)[0]
+            if imtype_original == '.jpg':
+                img_path = self.img_dir + file_name_base + '.png'
+            else:
+                img_path = self.img_dir + file_name_base + '.jpg'
+            im0 = cv2.imread(img_path)
+            if im0 is None:
+                raise FileNotFoundError(f"Cannot read image: {self.img_dir + file_name} or {img_path}")
+            # Update file extension for consistency
+            if imtype_original == '.jpg':
+                imtype = '.png'
+            else:
+                imtype = '.jpg'
+        else:
+            imtype = imtype_original
         img = np.zeros([im0.shape[0], im0.shape[1], 3, seq_num])
         pre_revrs_ids = []        # len(pre_img_ids) = seq_num - 1
         interval = []
@@ -199,6 +218,16 @@ class COCO(data.Dataset):
                 pre_revrs_ids.append(temp_id)
                 interval.append(img_id - temp_id)
             im = cv2.imread(self.img_dir + imName)
+            if im is None:
+                # Try alternative extension
+                imName_base = imName.rsplit('.', 1)[0]
+                if imtype == '.png':
+                    imName_alt = imName_base + '.jpg'
+                else:
+                    imName_alt = imName_base + '.png'
+                im = cv2.imread(self.img_dir + imName_alt)
+                if im is None:
+                    raise FileNotFoundError(f"Cannot read image: {self.img_dir + imName} or {self.img_dir + imName_alt}")
             #normalize
             inp_i = (im.astype(np.float32) / 255.)
             inp_i = (inp_i - self.mean) / self.std

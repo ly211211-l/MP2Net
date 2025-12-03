@@ -414,7 +414,7 @@ class MaskProp(nn.Module):
         feat_patch_kept = feat_patch[keep_index, :]                                         # Ind, C, Ws, Ws
         mask_patch_kept = mask_patch[keep_index, :]                                         # Ind, 1, Ws, Ws
         heat_attn = self.attn_cross(feat_patch_kept, pre_patch_kept * mask_patch_kept)      # Ind, C, Ws, Ws
-        heat_compe = torch.zeros(Wn, C, self.ws, self.ws).cuda()
+        heat_compe = torch.zeros(Wn, C, self.ws, self.ws, device=feat.device)
         heat_compe[keep_index, :, :, :] = heat_attn
 
         # ----------- reverse -----------

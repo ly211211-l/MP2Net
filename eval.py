@@ -8,6 +8,10 @@ import argparse
 import glob
 import os
 import logging
+import numpy as np
+# Fix NumPy 2.0 compatibility: add back np.asfarray if missing
+if not hasattr(np, 'asfarray'):
+    np.asfarray = lambda a, dtype=None: np.asarray(a, dtype=dtype if dtype else np.float64)
 import motmetrics as mm
 import pandas as pd
 from collections import OrderedDict
@@ -57,7 +61,7 @@ if __name__ == '__main__':
     if args.solver:
         mm.lap.default_solver = args.solver
 
-    gtfiles = glob.glob(os.path.join('./data/ICPR/val_data', '*/gt.txt'))
+    gtfiles = glob.glob(os.path.join('./dataset/ICPR/val_data', '*/gt.txt'))
     print('gt_files', gtfiles)
     tsfiles = [f for f in glob.glob(os.path.join(args.result, '*.txt'))]
 

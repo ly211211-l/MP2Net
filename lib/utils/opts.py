@@ -62,9 +62,9 @@ class opts(object):
                                  help='savepath of model.')
 
         # dataset
-        self.parser.add_argument('--datasetname', type=str, default='ICPR_caronly',
+        self.parser.add_argument('--datasetname', type=str, default='ICPR',
                                  help='dataset name.')
-        self.parser.add_argument('--data_dir', type=str, default= './data/ICPR_caronly/',
+        self.parser.add_argument('--data_dir', type=str, default= './dataset/ICPR/',
                                  help='path of dataset.')
 
 

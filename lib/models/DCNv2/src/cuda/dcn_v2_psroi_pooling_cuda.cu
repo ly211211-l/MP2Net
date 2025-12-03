@@ -14,10 +14,14 @@
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
-
-#include <THC/THC.h>
-#include <THC/THCAtomics.cuh>
-#include <THC/THCDeviceUtils.cuh>
+#include <c10/cuda/CUDAException.h>
+// Removed in PyTorch 2.0+: THC API has been removed
+// #include <THC/THC.h>
+// #include <THC/THCAtomics.cuh>
+// #include <THC/THCDeviceUtils.cuh>
+// Helper macro for ceiling division (replacement for THCCeilDiv)
+#define CEIL_DIV(a, b) ((a + b - 1) / b)
+// AT_CUDA_CHECK is defined in c10/cuda/CUDAException.h
 
 #define CUDA_KERNEL_LOOP(i, n)                        \
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; \
@@ -281,9 +285,9 @@ dcn_v2_psroi_pooling_cuda_forward(const at::Tensor &input,
                                   const int sample_per_part,
                                   const float trans_std)
 {
-  AT_ASSERTM(input.type().is_cuda(), "input must be a CUDA tensor");
-  AT_ASSERTM(bbox.type().is_cuda(), "rois must be a CUDA tensor");
-  AT_ASSERTM(trans.type().is_cuda(), "trans must be a CUDA tensor");
+  AT_ASSERTM(input.is_cuda(), "input must be a CUDA tensor");
+  AT_ASSERTM(bbox.is_cuda(), "rois must be a CUDA tensor");
+  AT_ASSERTM(trans.is_cuda(), "trans must be a CUDA tensor");
 
   const int batch = input.size(0);
   const int channels = input.size(1);
@@ -307,11 +311,11 @@ dcn_v2_psroi_pooling_cuda_forward(const at::Tensor &input,
 
   if (out.numel() == 0)
   {
-    THCudaCheck(cudaGetLastError());
+    AT_CUDA_CHECK(cudaGetLastError());
     return std::make_tuple(out, top_count);
   }
 
-  dim3 grid(std::min(THCCeilDiv(out_size, 512L), 4096L));
+  dim3 grid(std::min(CEIL_DIV(out_size, 512L), 4096L));
   dim3 block(512);
 
   AT_DISPATCH_FLOATING_TYPES(input.type(), "dcn_v2_psroi_pooling_cuda_forward", [&] {
@@ -336,7 +340,7 @@ dcn_v2_psroi_pooling_cuda_forward(const at::Tensor &input,
         out.data<scalar_t>(),
         top_count.data<scalar_t>());
   });
-  THCudaCheck(cudaGetLastError());
+  AT_CUDA_CHECK(cudaGetLastError());
   return std::make_tuple(out, top_count);
 }
 
@@ -355,11 +359,11 @@ dcn_v2_psroi_pooling_cuda_backward(const at::Tensor &out_grad,
                                    const int sample_per_part,
                                    const float trans_std)
 {
-  AT_ASSERTM(out_grad.type().is_cuda(), "out_grad must be a CUDA tensor");
-  AT_ASSERTM(input.type().is_cuda(), "input must be a CUDA tensor");
-  AT_ASSERTM(bbox.type().is_cuda(), "bbox must be a CUDA tensor");
-  AT_ASSERTM(trans.type().is_cuda(), "trans must be a CUDA tensor");
-  AT_ASSERTM(top_count.type().is_cuda(), "top_count must be a CUDA tensor");
+  AT_ASSERTM(out_grad.is_cuda(), "out_grad must be a CUDA tensor");
+  AT_ASSERTM(input.is_cuda(), "input must be a CUDA tensor");
+  AT_ASSERTM(bbox.is_cuda(), "bbox must be a CUDA tensor");
+  AT_ASSERTM(trans.is_cuda(), "trans must be a CUDA tensor");
+  AT_ASSERTM(top_count.is_cuda(), "top_count must be a CUDA tensor");
 
   const int batch = input.size(0);
   const int channels = input.size(1);
@@ -380,11 +384,11 @@ dcn_v2_psroi_pooling_cuda_backward(const at::Tensor &out_grad,
 
   if (input_grad.numel() == 0)
   {
-    THCudaCheck(cudaGetLastError());
+    AT_CUDA_CHECK(cudaGetLastError());
     return std::make_tuple(input_grad, trans_grad);
   }
 
-  dim3 grid(std::min(THCCeilDiv(out_size, 512L), 4096L));
+  dim3 grid(std::min(CEIL_DIV(out_size, 512L), 4096L));
   dim3 block(512);
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
@@ -414,6 +418,6 @@ dcn_v2_psroi_pooling_cuda_backward(const at::Tensor &out_grad,
         num_classes,
         channels_each_class);
   });
-  THCudaCheck(cudaGetLastError());
+  AT_CUDA_CHECK(cudaGetLastError());
   return std::make_tuple(input_grad, trans_grad);
 }

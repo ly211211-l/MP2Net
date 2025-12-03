@@ -6,11 +6,26 @@ import os
 from re import L
 from lib.utils.opts import opts
 opt = opts().parse()
-os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpus_str
+# 检查是否使用 CPU 模式
+if opt.gpus_str != '-1':
+    os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpus_str
+else:
+    os.environ['CUDA_VISIBLE_DEVICES'] = ''
 import numpy as np
 import cv2
 import time
 import torch
+# 确定设备（CPU 或 CUDA）
+# 如果指定了 -1 或者 CUDA 不可用，则使用 CPU
+if opt.gpus_str == '-1' or opt.gpus[0] == -1:
+    device = torch.device('cpu')
+    print("Using CPU mode (--gpus -1 specified)")
+elif not torch.cuda.is_available():
+    device = torch.device('cpu')
+    print("CUDA not available, falling back to CPU mode")
+else:
+    device = torch.device('cuda')
+    print(f"Using CUDA device: {opt.gpus[0]}")
 import torch.nn.functional as F
 from collections import defaultdict
 
@@ -59,7 +74,8 @@ def process(model, ratios, image, vid=None):
             wh = output['wh']
             reg = output['reg']
             dis = output['dis']
-            torch.cuda.synchronize()
+            if device.type == 'cuda':
+                torch.cuda.synchronize()
             dets = ctdet_decode(hm, wh, reg=reg, tracking=dis, num_classes=opt.num_classes, K=opt.K)
             for k in dets:
                 dets[k] = dets[k].detach().cpu().numpy()
@@ -127,13 +143,15 @@ def merge_tracks(dets):
 def test(opt, split, modelPath, show_flag, results_name):
     # Logger(opt)
     print(opt.model_name)
+    print(f"Using device: {device}")
 
     # ------------------load data and model------------------
     dataset = COCO(opt, split)
-    data_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=1, pin_memory=True)
+    pin_memory = (device.type == 'cuda')
+    data_loader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=1, pin_memory=pin_memory)
     model = get_det_net({'hm': dataset.num_classes, 'wh': 2, 'reg': 2, 'dis': 2}, opt.model_name)
     model = load_model(model, modelPath)
-    model = model.cuda()
+    model = model.to(device)
     model.eval()
 
     # some useful initialization
@@ -165,7 +183,7 @@ def test(opt, split, modelPath, show_flag, results_name):
         file_folder_cur = pre_processed_images['file_name'][0].split('_')[0]      # ICPR
         # file_folder_cur = pre_processed_images['file_name'][0].split('/')[-3]       # AIRMOT & Skysat
         meta = pre_process(pre_processed_images['input'], scale=1)
-        image = pre_processed_images['input'].cuda()
+        image = pre_processed_images['input'].to(device)
 
         # cur image detection
         dets_all = process(model, ratios, image, vid=file_folder_cur+'_'+str(im_count))
@@ -189,7 +207,7 @@ def test(opt, split, modelPath, show_flag, results_name):
                 # load model
                 model = get_det_net({'hm': dataset.num_classes, 'wh': 2, 'reg': 2, 'dis': 2}, opt.model_name)
                 model = load_model(model, modelPath)
-                model = model.cuda()
+                model = model.to(device)
                 model.eval()
                 im_count = 0
                 txt_path = os.path.join(track_results_save_dir, file_folder_cur+'.txt')

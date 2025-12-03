@@ -38,18 +38,15 @@ class COCO(data.Dataset):
     def __init__(self, opt, split):
         super(COCO, self).__init__()
 
-        self.img_dir0 = self.opt.data_dir   #/dataset/ICPR
+        # 确保路径以/结尾
+        self.img_dir0 = self.opt.data_dir.rstrip('/') + '/'
+        
+        self.img_dir = self.img_dir0 + split + '_data/'
 
-        self.img_dir = self.opt.data_dir + split + '_data/'
-
-        if split == 'train':
-            self.annot_path = os.path.join(
-                self.img_dir0, 'annotations',
-                'instances_{}_caronly.json').format(split)
-        else:
-            self.annot_path = os.path.join(
-                self.img_dir0, 'annotations',
-                'instances_{}_caronly.json').format(split)
+        # 构建标注文件路径
+        self.annot_path = os.path.join(
+            self.img_dir0, 'annotations',
+            'instances_{}_caronly.json').format(split)
 
         self.down_ratio = opt.down_ratio
         self.max_objs = opt.K
@@ -69,7 +66,57 @@ class COCO(data.Dataset):
         self.opt = opt
 
         print('==> initializing ICPR {} data.'.format(split))
-        self.coco = coco.COCO(self.annot_path)
+        print('Annotation file path: {}'.format(self.annot_path))
+        
+        # 检查文件是否存在
+        if not os.path.exists(self.annot_path):
+            raise FileNotFoundError(
+                'JSON annotation file not found: {}\n'
+                'Please check if the file exists and the path is correct.'.format(self.annot_path)
+            )
+        
+        # 检查文件大小
+        file_size = os.path.getsize(self.annot_path)
+        file_size_mb = file_size / (1024 * 1024)
+        print('Annotation file size: {:.2f} MB ({:.2f} GB)'.format(file_size_mb, file_size_mb / 1024))
+        
+        # 尝试加载JSON文件，添加错误处理
+        try:
+            print('Loading annotations into memory...')
+            self.coco = coco.COCO(self.annot_path)
+            print('Done loading annotations.')
+        except json.JSONDecodeError as e:
+            error_msg = (
+                '\n' + '='*60 + '\n'
+                'JSON解析错误！\n'
+                '文件: {}\n'
+                '错误位置: line {}, column {} (char {})\n'
+                '错误信息: {}\n'
+                '='*60 + '\n'
+                '可能的原因：\n'
+                '1. JSON文件损坏或不完整\n'
+                '2. 文件在传输/复制过程中出现问题\n'
+                '3. 文件格式不正确\n\n'
+                '建议解决方案：\n'
+                '1. 检查JSON文件是否完整（文件大小约1GB）\n'
+                '2. 尝试重新下载或获取该文件\n'
+                '3. 使用检查脚本验证: python check_json.py "{}"\n'
+                '4. 检查文件权限（确保有读取权限）\n'
+                '='*60 + '\n'
+            ).format(self.annot_path, e.lineno, e.colno, e.pos, str(e), self.annot_path)
+            print(error_msg)
+            raise
+        except Exception as e:
+            error_msg = (
+                '\n' + '='*60 + '\n'
+                '加载JSON文件时发生错误！\n'
+                '文件: {}\n'
+                '错误类型: {}\n'
+                '错误信息: {}\n'
+                '='*60 + '\n'
+            ).format(self.annot_path, type(e).__name__, str(e))
+            raise Exception(error_msg) from e
+        
         self.images = self.coco.getImgIds()
         self.num_samples = len(self.images)
 

@@ -8,6 +8,10 @@ import argparse
 import glob
 import os
 import logging
+import numpy as np
+# Fix NumPy 2.0 compatibility: add back np.asfarray if missing
+if not hasattr(np, 'asfarray'):
+    np.asfarray = lambda a, dtype=None: np.asarray(a, dtype=dtype if dtype else np.float64)
 import motmetrics as mm
 import pandas as pd
 from collections import OrderedDict
@@ -65,6 +69,7 @@ if __name__ == '__main__':
     if args.solver:
         mm.lap.default_solver = args.solver
 
+    # Use original code's file path logic: ./data/MTB-SAT/test/label/{cate}/*.txt
     gtfiles = glob.glob(os.path.join('./data/MTB-SAT/test/label', args.cate, '*.txt'))
     tsfiles = [f for f in glob.glob(os.path.join(args.result, args.cate, '*.txt'))]
 
@@ -73,9 +78,57 @@ if __name__ == '__main__':
     logging.info('Default LAP solver \'{}\''.format(mm.lap.default_solver))
     logging.info('Loading files.')
     
-    gt = OrderedDict([(os.path.splitext(Path(f).parts[-1])[0], mm.io.loadtxt(f, NAME_LABEL[args.cate], fmt=args.fmt)) for f in gtfiles])
-    ts = OrderedDict([(os.path.splitext(Path(f).parts[-1])[0], mm.io.loadtxt(f, NAME_LABEL[args.cate], fmt='mot16')) for f in tsfiles])    
-
+    # Load GT: Original code uses fmt='mtb-sat' but motmetrics doesn't support it
+    # The files are in MOT format with 11 fields: frame_id,track_id,x,y,w,h,conf,class_id,visibility,?,?
+    # We need to manually parse to correctly extract all fields
+    gt = OrderedDict()
+    for f in gtfiles:
+        seq_id = os.path.splitext(Path(f).parts[-1])[0]
+        try:
+            all_detections = []
+            with open(f, 'r') as file:
+                for line in file:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split(',')
+                    if len(parts) >= 9:
+                        frame_id = int(float(parts[0]))
+                        track_id = int(float(parts[1]))
+                        x = float(parts[2])
+                        y = float(parts[3])
+                        w = float(parts[4])
+                        h = float(parts[5])
+                        conf = float(parts[6])
+                        class_id = int(float(parts[7]))
+                        visibility = float(parts[8])
+                        
+                        # Filter by class_id (original code's intent via NAME_LABEL parameter)
+                        if class_id == NAME_LABEL[args.cate]:
+                            all_detections.append([frame_id, track_id, x, y, w, h, conf, class_id, visibility])
+            
+            if all_detections:
+                df = pd.DataFrame(all_detections, columns=['FrameId', 'Id', 'X', 'Y', 'Width', 'Height', 'Confidence', 'ClassId', 'Visibility'])
+                df = df.set_index(['FrameId', 'Id'])
+                gt[seq_id] = df
+        except Exception as e:
+            logging.warning('Failed to load GT file {}: {}'.format(f, e))
+    
+    # Load test results: Original code uses fmt='mot16' with NAME_LABEL as positional parameter
+    # Fixed: Use objid as keyword parameter to avoid parameter conflict
+    # Note: objid parameter may not work correctly, so we manually filter by ClassId
+    ts = OrderedDict()
+    for f in tsfiles:
+        seq_id = os.path.splitext(Path(f).parts[-1])[0]
+        try:
+            df = mm.io.loadtxt(f, fmt='mot16')
+            # Filter by ClassId to only keep the target category
+            if 'ClassId' in df.columns:
+                df = df[df['ClassId'] == NAME_LABEL[args.cate]]
+            ts[seq_id] = df
+        except Exception as e:
+            logging.warning('Failed to load test file {}: {}'.format(f, e))
+    
     mh = mm.metrics.create()    
     accs, names = compare_dataframes(gt, ts)
     

@@ -123,7 +123,7 @@ class BaseTrainer(object):
                      loss_stats['wh_loss'].mean().cpu().detach().numpy(),
                      loss_stats['off_loss'].mean().cpu().detach().numpy(),
                      loss_stats['track_loss'].mean().cpu().detach().numpy(),
-                     loss_stats['seq_loss'].mean().cpu().detach().numpy()))
+                     loss_stats['seq_loss'].mean().cpu().detach().numpy()), flush=True)
 
             end = time.time()
 
@@ -183,7 +183,7 @@ class BaseTrainer(object):
                      loss_stats['hm_loss'].mean().cpu().detach().numpy(),
                      loss_stats['wh_loss'].mean().cpu().detach().numpy(),
                      loss_stats['off_loss'].mean().cpu().detach().numpy(),
-                     loss_stats['track_loss'].mean().cpu().detach().numpy()))
+                     loss_stats['track_loss'].mean().cpu().detach().numpy()), flush=True)
             end = time.time()
 
             for l in avg_loss_stats:

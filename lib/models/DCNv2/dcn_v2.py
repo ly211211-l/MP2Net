@@ -5,12 +5,31 @@ from __future__ import division
 
 import math
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.autograd import Function
 from torch.nn.modules.utils import _pair
 from torch.autograd.function import once_differentiable
 
-import _ext as _backend
+try:
+    import _ext as _backend
+except ImportError:
+    import os
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    raise ImportError(
+        f"\n{'='*60}\n"
+        f"错误：无法导入 DCNv2 扩展模块 '_ext'\n"
+        f"{'='*60}\n"
+        f"原因：DCNv2 的 C++/CUDA 扩展模块尚未编译。\n\n"
+        f"解决方案：\n"
+        f"1. 进入 DCNv2 目录：\n"
+        f"   cd {current_dir}\n\n"
+        f"2. 编译扩展模块：\n"
+        f"   python setup.py build develop\n\n"
+        f"   或者使用 make.sh：\n"
+        f"   bash make.sh\n"
+        f"{'='*60}\n"
+    )
 
 
 class _DCNv2(Function):
@@ -116,16 +135,25 @@ class DCN(DCNv2):
         self.conv_offset_mask.bias.data.zero_()
 
     def forward(self, input):
-        out = self.conv_offset_mask(input)
-        o1, o2, mask = torch.chunk(out, 3, dim=1)
-        offset = torch.cat((o1, o2), dim=1)
-        mask = torch.sigmoid(mask)
-        return dcn_v2_conv(input, offset, mask,
-                           self.weight, self.bias,
-                           self.stride,
-                           self.padding,
-                           self.dilation,
-                           self.deformable_groups)
+        # 检查输入是否在CPU上，如果是则使用普通卷积作为fallback
+        if input.device.type == 'cpu':
+            # CPU模式：使用普通卷积作为fallback（使用DCN的主卷积权重）
+            return F.conv2d(input, self.weight, self.bias,
+                           stride=self.stride,
+                           padding=self.padding,
+                           dilation=self.dilation)
+        else:
+            # GPU模式：使用原始的可变形卷积
+            out = self.conv_offset_mask(input)
+            o1, o2, mask = torch.chunk(out, 3, dim=1)
+            offset = torch.cat((o1, o2), dim=1)
+            mask = torch.sigmoid(mask)
+            return dcn_v2_conv(input, offset, mask,
+                               self.weight, self.bias,
+                               self.stride,
+                               self.padding,
+                               self.dilation,
+                               self.deformable_groups)
 
 
 

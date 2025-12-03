@@ -1,0 +1,31 @@
+# IDE 配置
+.idea/
+.vscode/
+
+# 数据和大文件（根据你项目实际情况可以再补）
+data/
+dataset/
+SatMTB/
+ICPR/
+checkpoints/
+logs/
+*.pth
+*.pt
+
+# 缓存/编译产物
+__pycache__/
+lib/**/__pycache__/
+lib/external/build/
+*.so
+*.pyd
+
+# 可视化图片（如果以后想版本管理可以删掉这些规则）
+*_eval.png
+ship.png
+car_eval.png
+airplane_eval.png
+
+# 其它临时文件
+lib/models/DCNv2/compile_error.log
+
+

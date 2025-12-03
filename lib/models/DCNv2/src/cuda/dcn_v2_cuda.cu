@@ -3,12 +3,19 @@
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
+#include <cuda_runtime.h>
+// Removed in PyTorch 2.0+: THC API has been removed
+// #include <THC/THCAtomics.cuh>
+// #include <THC/THCDeviceUtils.cuh>
+#include <cublas_v2.h>
+#include <ATen/cuda/CUDABlas.h>
 
-#include <THC/THC.h>
-#include <THC/THCAtomics.cuh>
-#include <THC/THCDeviceUtils.cuh>
-
-extern THCState *state;
+#define CUBLAS_CHECK(condition) \
+  do { \
+    cublasStatus_t status = condition; \
+    AT_ASSERTM(status == CUBLAS_STATUS_SUCCESS, "CUBLAS error: %d", status); \
+  } while (0)
 
 // author: Charles Shang
 // https://github.com/torch/cunn/blob/master/lib/THCUNN/generic/SpatialConvolutionMM.cu
@@ -56,12 +63,11 @@ dcn_v2_cuda_forward(const at::Tensor &input,
                     const int deformable_group)
 {
     using scalar_t = float;
-    // THCAssertSameGPU(THCudaTensor_checkGPU(state, 5, input, weight, bias, offset, mask));
-    AT_ASSERTM(input.type().is_cuda(), "input must be a CUDA tensor");
-    AT_ASSERTM(weight.type().is_cuda(), "weight must be a CUDA tensor");
-    AT_ASSERTM(bias.type().is_cuda(), "bias must be a CUDA tensor");
-    AT_ASSERTM(offset.type().is_cuda(), "offset must be a CUDA tensor");
-    AT_ASSERTM(mask.type().is_cuda(), "mask must be a CUDA tensor");
+    AT_ASSERTM(input.is_cuda(), "input must be a CUDA tensor");
+    AT_ASSERTM(weight.is_cuda(), "weight must be a CUDA tensor");
+    AT_ASSERTM(bias.is_cuda(), "bias must be a CUDA tensor");
+    AT_ASSERTM(offset.is_cuda(), "offset must be a CUDA tensor");
+    AT_ASSERTM(mask.is_cuda(), "mask must be a CUDA tensor");
 
     const int batch = input.size(0);
     const int channels = input.size(1);
@@ -72,10 +78,6 @@ dcn_v2_cuda_forward(const at::Tensor &input,
     const int channels_kernel = weight.size(1);
     const int kernel_h_ = weight.size(2);
     const int kernel_w_ = weight.size(3);
-
-    // printf("Kernels: %d %d %d %d\n", kernel_h_, kernel_w_, kernel_w, kernel_h);
-    // printf("Channels: %d %d\n", channels, channels_kernel);
-    // printf("Channels: %d %d\n", channels_out, channels_kernel);
 
     AT_ASSERTM(kernel_h_ == kernel_h && kernel_w_ == kernel_w,
                "Input shape and kernel shape wont match: (%d x %d vs %d x %d).", kernel_h_, kernel_w, kernel_h_, kernel_w_);
@@ -94,17 +96,32 @@ dcn_v2_cuda_forward(const at::Tensor &input,
     // when batch size is large.
     // launch batch threads
     int matrices_size = batch * sizeof(float *);
-    auto input_b = static_cast<const float **>(THCudaMalloc(state, matrices_size));
-    auto output_b = static_cast<float **>(THCudaMalloc(state, matrices_size));
-    auto columns_b = static_cast<float **>(THCudaMalloc(state, matrices_size));
-    auto ones_b = static_cast<const float **>(THCudaMalloc(state, matrices_size));
-    auto weight_b = static_cast<const float **>(THCudaMalloc(state, matrices_size));
-    auto bias_b = static_cast<const float **>(THCudaMalloc(state, matrices_size));
+    const float **input_b;
+    float **output_b;
+    float **columns_b;
+    const float **ones_b;
+    const float **weight_b;
+    const float **bias_b;
+    
+    cudaError_t err;
+    err = cudaMalloc(&input_b, matrices_size);
+    AT_ASSERTM(err == cudaSuccess, "cudaMalloc failed for input_b");
+    err = cudaMalloc(&output_b, matrices_size);
+    AT_ASSERTM(err == cudaSuccess, "cudaMalloc failed for output_b");
+    err = cudaMalloc(&columns_b, matrices_size);
+    AT_ASSERTM(err == cudaSuccess, "cudaMalloc failed for columns_b");
+    err = cudaMalloc(&ones_b, matrices_size);
+    AT_ASSERTM(err == cudaSuccess, "cudaMalloc failed for ones_b");
+    err = cudaMalloc(&weight_b, matrices_size);
+    AT_ASSERTM(err == cudaSuccess, "cudaMalloc failed for weight_b");
+    err = cudaMalloc(&bias_b, matrices_size);
+    AT_ASSERTM(err == cudaSuccess, "cudaMalloc failed for bias_b");
 
     const int block = 128;
     const int grid = (batch + block - 1) / block;
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
-    createBatchGemmBuffer<<<grid, block, 0, THCState_getCurrentStream(state)>>>(
+    createBatchGemmBuffer<<<grid, block, 0, stream>>>(
         input_b, output_b,
         columns_b, ones_b,
         weight_b, bias_b,
@@ -120,23 +137,28 @@ dcn_v2_cuda_forward(const at::Tensor &input,
         height_out * width_out,
         batch);
 
+    cublasHandle_t handle = at::cuda::getCurrentCUDABlasHandle();
+    cublasSetStream(handle, stream);
+    const float alpha = 1.0f;
+    const float beta_bias = 0.0f;
+    
     long m_ = channels_out;
     long n_ = height_out * width_out;
     long k_ = 1;
-    THCudaBlas_SgemmBatched(state,
-                            't',
-                            'n',
+    CUBLAS_CHECK(cublasSgemmBatched(handle,
+                            CUBLAS_OP_T,
+                            CUBLAS_OP_N,
                             n_,
                             m_,
                             k_,
-                            1.0f,
+                            &alpha,
                             ones_b, k_,
                             bias_b, k_,
-                            0.0f,
+                            &beta_bias,
                             output_b, n_,
-                            batch);
+                            batch));
 
-    modulated_deformable_im2col_cuda(THCState_getCurrentStream(state),
+    modulated_deformable_im2col_cuda(stream,
                                      input.data<scalar_t>(),
                                      offset.data<scalar_t>(),
                                      mask.data<scalar_t>(),
@@ -149,25 +171,26 @@ dcn_v2_cuda_forward(const at::Tensor &input,
     long m = channels_out;
     long n = height_out * width_out;
     long k = channels * kernel_h * kernel_w;
-    THCudaBlas_SgemmBatched(state,
-                            'n',
-                            'n',
+    const float beta = 1.0f;
+    CUBLAS_CHECK(cublasSgemmBatched(handle,
+                            CUBLAS_OP_N,
+                            CUBLAS_OP_N,
                             n,
                             m,
                             k,
-                            1.0f,
+                            &alpha,
                             (const float **)columns_b, n,
                             weight_b, k,
-                            1.0f,
+                            &beta,
                             output_b, n,
-                            batch);
+                            batch));
 
-    THCudaFree(state, input_b);
-    THCudaFree(state, output_b);
-    THCudaFree(state, columns_b);
-    THCudaFree(state, ones_b);
-    THCudaFree(state, weight_b);
-    THCudaFree(state, bias_b);
+    cudaFree(input_b);
+    cudaFree(output_b);
+    cudaFree(columns_b);
+    cudaFree(ones_b);
+    cudaFree(weight_b);
+    cudaFree(bias_b);
     return output;
 }
 
@@ -216,14 +239,14 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
                                              int deformable_group)
 {
 
-    THArgCheck(input.is_contiguous(), 1, "input tensor has to be contiguous");
-    THArgCheck(weight.is_contiguous(), 2, "weight tensor has to be contiguous");
+    AT_ASSERTM(input.is_contiguous(), "input tensor has to be contiguous");
+    AT_ASSERTM(weight.is_contiguous(), "weight tensor has to be contiguous");
 
-    AT_ASSERTM(input.type().is_cuda(), "input must be a CUDA tensor");
-    AT_ASSERTM(weight.type().is_cuda(), "weight must be a CUDA tensor");
-    AT_ASSERTM(bias.type().is_cuda(), "bias must be a CUDA tensor");
-    AT_ASSERTM(offset.type().is_cuda(), "offset must be a CUDA tensor");
-    AT_ASSERTM(mask.type().is_cuda(), "mask must be a CUDA tensor");
+    AT_ASSERTM(input.is_cuda(), "input must be a CUDA tensor");
+    AT_ASSERTM(weight.is_cuda(), "weight must be a CUDA tensor");
+    AT_ASSERTM(bias.is_cuda(), "bias must be a CUDA tensor");
+    AT_ASSERTM(offset.is_cuda(), "offset must be a CUDA tensor");
+    AT_ASSERTM(mask.is_cuda(), "mask must be a CUDA tensor");
 
     const int batch = input.size(0);
     const int channels = input.size(1);
@@ -255,6 +278,12 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
     auto grad_mask = at::zeros_like(mask);
 
     using scalar_t = float;
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+    cublasHandle_t handle = at::cuda::getCurrentCUDABlasHandle();
+    cublasSetStream(handle, stream);
+    const float alpha = 1.0f;
+    const float beta = 1.0f;
+    const float beta_zero = 0.0f;
 
     for (int b = 0; b < batch; b++)
     {
@@ -270,13 +299,13 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
         long n = height_out * width_out;
         long k = channels_out;
 
-        THCudaBlas_Sgemm(state, 'n', 't', n, m, k, 1.0f,
+        CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_T, n, m, k, &alpha,
                          grad_output_n.data<scalar_t>(), n,
-                         weight.data<scalar_t>(), m, 0.0f,
-                         columns.data<scalar_t>(), n);
+                         weight.data<scalar_t>(), m, &beta_zero,
+                         columns.data<scalar_t>(), n));
 
         // gradient w.r.t. input coordinate data
-        modulated_deformable_col2im_coord_cuda(THCState_getCurrentStream(state),
+        modulated_deformable_col2im_coord_cuda(stream,
                                                columns.data<scalar_t>(),
                                                input_n.data<scalar_t>(),
                                                offset_n.data<scalar_t>(),
@@ -288,7 +317,7 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
                                                grad_offset_n.data<scalar_t>(),
                                                grad_mask_n.data<scalar_t>());
         // gradient w.r.t. input data
-        modulated_deformable_col2im_cuda(THCState_getCurrentStream(state),
+        modulated_deformable_col2im_cuda(stream,
                                          columns.data<scalar_t>(),
                                          offset_n.data<scalar_t>(),
                                          mask_n.data<scalar_t>(),
@@ -299,7 +328,7 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
                                          grad_input_n.data<scalar_t>());
 
         // gradient w.r.t. weight, dWeight should accumulate across the batch and group
-        modulated_deformable_im2col_cuda(THCState_getCurrentStream(state),
+        modulated_deformable_im2col_cuda(stream,
                                          input_n.data<scalar_t>(),
                                          offset_n.data<scalar_t>(),
                                          mask_n.data<scalar_t>(),
@@ -313,20 +342,25 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
         long n_ = channels * kernel_h * kernel_w;
         long k_ = height_out * width_out;
 
-        THCudaBlas_Sgemm(state, 't', 'n', n_, m_, k_, 1.0f,
+        CUBLAS_CHECK(cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, n_, m_, k_, &alpha,
                          columns.data<scalar_t>(), k_,
-                         grad_output_n.data<scalar_t>(), k_, 1.0f,
-                         grad_weight.data<scalar_t>(), n_);
+                         grad_output_n.data<scalar_t>(), k_, &beta,
+                         grad_weight.data<scalar_t>(), n_));
 
         // gradient w.r.t. bias
-        // long m_ = channels_out;
-        // long k__ = height_out * width_out;
-        THCudaBlas_Sgemv(state,
-                         't',
-                         k_, m_, 1.0f,
-                         grad_output_n.data<scalar_t>(), k_,
-                         ones.data<scalar_t>(), 1, 1.0f,
-                         grad_bias.data<scalar_t>(), 1);
+        // Use gemv: grad_bias = grad_output^T * ones
+        // grad_output_n is k_ x m_ matrix, ones is k_ x 1 vector
+        // After transpose, we compute: y = alpha * A^T * x + beta * y
+        // where A is k_ x m_, x is k_ x 1, y is m_ x 1
+        CUBLAS_CHECK(cublasSgemv(handle,
+                         CUBLAS_OP_T,
+                         k_,  // m: number of rows of A (before transpose)
+                         m_,  // n: number of columns of A (before transpose)
+                         &alpha,
+                         grad_output_n.data<scalar_t>(), k_,  // A: k_ x m_ matrix, lda = k_
+                         ones.data<scalar_t>(), 1,  // x: k_ x 1 vector, incx = 1
+                         &beta,
+                         grad_bias.data<scalar_t>(), 1));  // y: m_ x 1 vector, incy = 1
     }
 
     return {
