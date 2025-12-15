@@ -1,0 +1,140 @@
+实验1：测试 ICPR 数据集（DLADCN 模型）
+cd /mnt/d/github/MP2Net
+conda activate mp2net
+
+# 测试
+python testTrackingSort.py \
+    --model_name DLADCN \
+    --gpus 0 \
+    --load_model ./checkpoints/SatVideoDT/MP2Net_ICPR_DLADCN.pth \
+    --datasetname ICPR \
+    --data_dir ./dataset/ICPR/ \
+    --num_classes 1 \
+    --conf_thres 0.3 \
+    --nms_thres 0.4
+
+输出位置：ICPR/DLADCN/results/trackingResultsDLADCN/
+
+
+
+实验2：测试 ICPR 数据集（ResFPN 模型）
+cd /mnt/d/github/MP2Net
+conda activate mp2net
+
+python testTrackingSort.py \
+    --model_name ResFPN \
+    --gpus 0 \
+    --load_model ./checkpoints/SatVideoDT/MP2Net_ICPR_ResFPN.pth \
+    --datasetname ICPR \
+    --data_dir ./dataset/ICPR/ \
+    --num_classes 1 \
+    --conf_thres 0.3 \
+    --nms_thres 0.4
+输出位置：ICPR/ResFPN/results/trackingResultsResFPN/
+
+实验3：测试 SatMTB 数据集
+cd /mnt/d/github/MP2Net
+conda activate mp2net
+
+python testDis_satmtb.py \
+    --model_name DLADCN \
+    --gpus 0 \
+    --load_model ./checkpoints/SatMTB/MP2Net_SatMTB_DLADCN.pth \
+    --datasetname SatMTB \
+    --data_dir ./dataset/SatMTB/ \
+    --num_classes 3 \
+    --seqLen 5 \
+    --conf_thres 0.3 \
+    --nms_thres 0.4
+
+输出位置：SatMTB/DLADCN/results/trackingResultsDLADCN/
+
+结果评估
+
+评估 ICPR 结果
+# 评估 DLADCN 模型
+python eval.py \
+    --result ./ICPR/DLADCN/results/trackingResultsDLADCN \
+    --loglevel info \
+    --fmt mot16
+
+# 评估 ResFPN 模型
+python eval.py \
+    --result ./ICPR/ResFPN/results/trackingResultsResFPN \
+    --loglevel info \
+    --fmt mot16
+
+
+评估 SatMTB 结果（按类别）
+# 评估 airplane 类别
+python eval_satmtb.py \
+    --result ./SatMTB/DLADCN/results/trackingResultsDLADCN \
+    --cate airplane \
+    --loglevel info \
+    --fmt mtb-sat
+
+# 评估 car 类别
+python eval_satmtb.py \
+    --result ./SatMTB/DLADCN/results/trackingResultsDLADCN \
+    --cate car \
+    --loglevel info \
+    --fmt mtb-sat
+
+# 评估 ship 类别
+python eval_satmtb.py \
+    --result ./SatMTB/DLADCN/results/trackingResultsDLADCN \
+    --cate ship \
+    --loglevel info \
+    --fmt mtb-sat
+
+
+
+完整实验流程示例
+示例1：ICPR + DLADCN（完整流程）
+cd /mnt/d/github/MP2Net
+conda activate mp2net
+
+# 步骤1：测试
+python testTrackingSort.py \
+    --model_name DLADCN \
+    --gpus 0 \
+    --load_model ./checkpoints/SatVideoDT/MP2Net_ICPR_DLADCN.pth \
+    --datasetname ICPR \
+    --data_dir ./dataset/ICPR/ \
+    --num_classes 1
+
+# 等待测试完成...
+
+# 步骤2：评估
+python eval.py \
+    --result ./ICPR/DLADCN/results/trackingResultsDLADCN \
+    --loglevel info
+
+重要参数说明
+参数	说明	ICPR	SatMTB
+--model_name	模型架构	DLADCN 或 ResFPN	DLADCN
+--num_classes	类别数量	1 (只有car)	3 (car, airplane, ship)
+--datasetname	数据集名称	ICPR	SatMTB
+--seqLen	序列长度	不需要	5
+--conf_thres	置信度阈值	0.3	0.3
+--nms_thres	NMS阈值	0.4	0.4
+
+建议执行顺序
+先测试 ICPR + DLADCN（最快，约10-30分钟）
+评估 ICPR 结果
+测试 SatMTB + DLADCN（约15-45分钟）
+评估 SatMTB 结果（3个类别）
+
+检查结果文件
+测试完成后，可以检查结果：
+# 查看结果文件列表
+ls -lh ./ICPR/DLADCN/results/trackingResultsDLADCN/
+ls -lh ./SatMTB/DLADCN/results/trackingResultsDLADCN/
+
+# 查看结果文件内容示例
+head -20 ./ICPR/DLADCN/results/trackingResultsDLADCN/001.txt
+结果文件格式（MOT格式）：
+frame_id,track_id,x,y,w,h,confidence,class_id,visibility
+1,1,100.00,200.00,50.00,30.00,1,1,1
+2,1,105.00,205.00,50.00,30.00,1,1,1
+...

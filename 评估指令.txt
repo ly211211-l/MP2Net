@@ -1,0 +1,105 @@
+一、评估前检查
+
+1.1 检查测试结果文件
+
+cd /mnt/d/github/MP2Net_exp
+conda activate mp2net_py38
+
+# 检查测试结果文件是否存在
+ls -lh ./SatMTB/DLADCN/results/trackingResultsDLADCN/airplane/ | head -5
+ls -lh ./SatMTB/DLADCN/results/trackingResultsDLADCN/car/ | head -5
+ls -lh ./SatMTB/DLADCN/results/trackingResultsDLADCN/ship/ | head -5
+
+# 统计每个类别的文件数量
+echo "Airplane结果文件数: $(ls ./SatMTB/DLADCN/results/trackingResultsDLADCN/airplane/*.txt 2>/dev/null | wc -l)"
+echo "Car结果文件数: $(ls ./SatMTB/DLADCN/results/trackingResultsDLADCN/car/*.txt 2>/dev/null | wc -l)"
+echo "Ship结果文件数: $(ls ./SatMTB/DLADCN/results/trackingResultsDLADCN/ship/*.txt 2>/dev/null | wc -l)"
+
+
+1.2 检查GT文件
+
+# 检查GT文件是否存在
+ls -lh ./data/MTB-SAT/test/label/airplane/ | head -5
+ls -lh ./data/MTB-SAT/test/label/car/ | head -5
+ls -lh ./data/MTB-SAT/test/label/ship/ | head -5
+
+# 统计每个类别的GT文件数量
+echo "Airplane GT文件数: $(ls ./data/MTB-SAT/test/label/airplane/*.txt 2>/dev/null | wc -l)"
+echo "Car GT文件数: $(ls ./data/MTB-SAT/test/label/car/*.txt 2>/dev/null | wc -l)"
+echo "Ship GT文件数: $(ls ./data/MTB-SAT/test/label/ship/*.txt 2>/dev/null | wc -l)"
+
+预期数量：
+Airplane: 25个GT文件
+Car: 30个GT文件
+Ship: 28个GT文件
+
+二、评估命令
+
+2.1 评估单个类别
+
+评估Airplane类别
+
+cd /mnt/d/github/MP2Net_exp
+conda activate mp2net_py38
+
+python eval_satmtb.py \
+    --result ./SatMTB/DLADCN/results/trackingResultsDLADCN \
+    --cate airplane
+
+评估Car类别
+
+python eval_satmtb.py \
+    --result ./SatMTB/DLADCN/results/trackingResultsDLADCN \
+    --cate car
+
+评估Ship类别
+
+python eval_satmtb.py \
+    --result ./SatMTB/DLADCN/results/trackingResultsDLADCN \
+    --cate ship
+
+
+2.2 一键评估所有类别
+
+cd /mnt/d/github/MP2Net_exp
+conda activate mp2net_py38
+
+for cate in airplane car ship; do
+    echo "=========================================="
+    echo "评估类别: $cate"
+    echo "=========================================="
+    python eval_satmtb.py \
+        --result ./SatMTB/DLADCN/results/trackingResultsDLADCN \
+        --cate $cate
+    echo ""
+    echo ""
+done
+
+
+2.3 保存评估结果到文件
+
+cd /mnt/d/github/MP2Net_exp
+conda activate mp2net_py38
+
+# 创建评估结果目录
+mkdir -p ./evaluation_results
+
+# 评估所有类别并保存结果
+for cate in airplane car ship; do
+    echo "评估类别: $cate" | tee -a ./evaluation_results/eval_$(date +%Y%m%d_%H%M%S).txt
+    python eval_satmtb.py \
+        --result ./SatMTB/DLADCN/results/trackingResultsDLADCN \
+        --cate $cate | tee -a ./evaluation_results/eval_$(date +%Y%m%d_%H%M%S).txt
+    echo "" | tee -a ./evaluation_results/eval_$(date +%Y%m%d_%H%M%S).txt
+done
+
+
+2.4论文预期结果对比
+
+根据论文，预期结果应该接近：
+
+
+类别	MOTA	IDF1	IDP	IDR	Rcll	Prcn
+car	60.3%	71.8%	88.0%	60.6%	64.7%	94.0%
+airplane	72.4%	83.3%	90.3%	77.3%	79.0%	92.3%
+ship	46.6%	64.5%	74.0%	57.2%	62.2%	80.5%

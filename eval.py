@@ -8,10 +8,6 @@ import argparse
 import glob
 import os
 import logging
-import numpy as np
-# Fix NumPy 2.0 compatibility: add back np.asfarray if missing
-if not hasattr(np, 'asfarray'):
-    np.asfarray = lambda a, dtype=None: np.asarray(a, dtype=dtype if dtype else np.float64)
 import motmetrics as mm
 import pandas as pd
 from collections import OrderedDict
